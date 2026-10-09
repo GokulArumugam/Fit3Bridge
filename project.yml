@@ -19,6 +19,7 @@ targets:
   Fit3Bridge:
     type: application
     platform: iOS
+    scheme: {}
     sources:
       - path: App
     dependencies:

@@ -35,7 +35,20 @@ App/                iOS app (SwiftUI)
 project.yml         XcodeGen spec → `xcodegen generate` creates Fit3Bridge.xcodeproj
 ```
 
-## Build & install (free Apple ID)
+## Install without a Mac/Xcode (recommended)
+
+1. **Cloud build:** every push to `main` runs `.github/workflows/build.yml` on GitHub's macOS runners and
+   publishes `Fit3Bridge.ipa` as the **latest** release (`https://github.com/<you>/Fit3Bridge/releases/tag/latest`).
+2. **SideStore** (free) installs and signs the IPA on the iPhone with your free Apple ID and refreshes it
+   every 7 days on the phone itself. One-time setup needs *any* computer (Windows/Linux/Mac, e.g. a friend's)
+   to create the pairing file – see https://docs.sidestore.io. After that no computer is needed.
+3. In SideStore: **My Apps → +** → pick the downloaded `Fit3Bridge.ipa`.
+
+**Quick protocol test, no install at all:** `web/` is published to GitHub Pages by `pages.yml`.
+Open `https://<you>.github.io/Fit3Bridge/` in the free **Bluefy** browser on the iPhone →
+Connect → Send notification. (Foreground only – just for testing.)
+
+## Build & install with Xcode (if you have a Mac you can use)
 
 1. Install **Xcode** from the App Store, open it once, accept the licence, and let it install the iOS platform.
 2. Xcode → Settings → Accounts → **+** → Apple ID (a free account is fine).

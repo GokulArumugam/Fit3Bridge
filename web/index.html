@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fit3 Bridge – Web test</title>
+<style>
+  body { font: 16px -apple-system, system-ui, sans-serif; margin: 0; padding: 16px; background: #f2f2f7; color: #111; }
+  h1 { font-size: 22px; margin: 4px 0 12px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  button { font: inherit; width: 100%; padding: 12px; margin: 4px 0; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
+  button:disabled { background: #b8c7da; }
+  input { font: inherit; width: 100%; box-sizing: border-box; padding: 10px; margin: 4px 0; border: 1px solid #ccc; border-radius: 8px; }
+  #status { font-weight: 600; }
+  #log { font: 11px ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 45vh; overflow: auto; }
+  .muted { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Fit3 Bridge · Web test</h1>
+<div class="card">
+  <div id="status">Not connected</div>
+  <div class="muted" id="info"></div>
+  <p class="muted">Open this page in the <b>Bluefy</b> browser (App Store, free). Before connecting: iPhone Settings → Bluetooth → ⓘ next to the band → Forget This Device, then reset the band.</p>
+  <button id="connect">Connect to Galaxy Fit3</button>
+</div>
+<div class="card">
+  <input id="title" value="Hello from iPhone">
+  <input id="body" value="Fit3 Bridge web test works 🎉">
+  <button id="notify" disabled>Send notification</button>
+  <button id="time" disabled>Sync time</button>
+  <button id="battery" disabled>Battery</button>
+</div>
+<div class="card">
+  <button id="copy">Copy log</button>
+  <div id="log"></div>
+</div>
+
+<script type="module">
+import * as P from "./fit3.js";
+
+const $ = (id) => document.getElementById(id);
+const logLines = [];
+function log(s) {
+  const line = new Date().toISOString().slice(11, 23) + "  " + s;
+  logLines.push(line);
+  $("log").textContent = logLines.slice(-300).reverse().join("\n");
+}
+const status = (s) => { $("status").textContent = s; log("== " + s); };
+const enable = (on) => ["notify", "time", "battery"].forEach((id) => ($(id).disabled = !on));
+
+let device, writeChar, writeWithResponse = true, mtu = 0, ready = false, setupStage = 0, seq = Date.now() % 100000 + 1;
+const asm = new P.Reassembler();
+const queue = []; let writing = false;
+const MAX_FRAME = 180;
+
+async function pump() {
+  if (writing) return;
+  writing = true;
+  try {
+    while (queue.length) {
+      const bytes = new Uint8Array(queue.shift());
+      if (writeWithResponse) await writeChar.writeValueWithResponse(bytes);
+      else { await writeChar.writeValueWithoutResponse(bytes); await new Promise((r) => setTimeout(r, 80)); }
+    }
+  } catch (e) { log("write error: " + e); }
+  writing = false;
+}
+function send(service, msg) {
+  log(`TX ${P.SERVICE_NAMES[service] || service} ${P.hex(msg)}`);
+  queue.push(...P.encodeMessage(service, msg, mtu, MAX_FRAME));
+  pump();
+}
+const localeId = () => 13; // English
+const hour24 = () => !new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12;
+const tzOffset = () => -new Date().getTimezoneOffset() * 60;
+const initSettings = () => P.initSettingsRequest(new Date(), tzOffset(), localeId(), hour24());
+
+function onFrame(data) {
+  if (P.isCapabilityRequest(data)) {
+    mtu = P.negotiatedTransportMtu(data);
+    log(`capability: transport MTU ${mtu}`);
+    queue.push(P.capabilityResponse(data)); pump();
+    status("Handshake OK – setting up band…");
+    setTimeout(() => { setupStage = 1; send(P.SERVICE.OOBE, P.watchInfoRequest); }, 220);
+    setTimeout(() => send(P.SERVICE.NOTIFICATIONS, P.iconCapabilityRequest), 650);
+    return;
+  }
+  let fr;
+  try { fr = P.decodeFrame(data); } catch (e) { log("RX raw " + P.hex(data)); return; }
+  const m = asm.push(fr);
+  if (!m) return;
+  log(`RX ${P.SERVICE_NAMES[m.service] || m.service} ${P.hex(m.message)}`);
+  if (m.service === P.SERVICE.OOBE) {
+    const id = P.oobeResponseId(m.message);
+    const v = P.findSoftwareVersion(m.message); if (v) $("info").textContent = "Firmware " + v;
+    if (id === 1 && setupStage === 1) { setupStage = 2; send(1, P.deviceStatusRequest); }
+    else if (id === 2 && setupStage === 2) { setupStage = 3; send(1, initSettings()); }
+    else if (id === 3 && setupStage === 3) { setupStage = 4; send(1, P.userAgreementRequest); }
+    else if (id === 4 && setupStage === 4) { setupStage = 5; done(); }
+  } else if (m.service === P.SERVICE.SETTINGS) {
+    const b = P.parseBattery(m.message);
+    if (b) $("info").textContent = `Battery ${b.percent}%${b.charging ? " (charging)" : ""}`;
+  } else if (m.service === P.SERVICE.NOTIFICATIONS) {
+    const ack = P.parseAck(m.message);
+    if (ack) status(ack.accepted ? "✅ Band accepted notification" : "❌ Band rejected notification");
+  }
+}
+function done() {
+  ready = true; enable(true);
+  status("Connected ✅");
+  setTimeout(() => send(P.SERVICE.SETTINGS, P.batteryRequest), 300);
+}
+
+$("connect").onclick = async () => {
+  try {
+    if (!navigator.bluetooth) { status("This browser has no Web Bluetooth – use Bluefy"); return; }
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [P.GATT.service] });
+    device.addEventListener("gattserverdisconnected", () => { ready = false; enable(false); status("Disconnected"); });
+    status("Connecting to " + (device.name || "device") + "…");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(P.GATT.service);
+    const notifyChar = await svc.getCharacteristic(P.GATT.notify);
+    writeChar = await svc.getCharacteristic(P.GATT.write);
+    writeWithResponse = !!writeChar.properties.write;
+    log("write mode: " + (writeWithResponse ? "with response" : "without response"));
+    notifyChar.addEventListener("characteristicvaluechanged", (e) => {
+      const v = e.target.value; onFrame(Array.from(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)));
+    });
+    await notifyChar.startNotifications();
+    status("Subscribed – waiting for band handshake…");
+    setTimeout(() => { if (!mtu) status("No handshake from band after 15s – reset the band and retry"); }, 15000);
+  } catch (e) { status("Error: " + e); }
+};
+$("notify").onclick = () => send(P.SERVICE.NOTIFICATIONS, P.newNotification({
+  sequence: seq++, title: $("title").value, text: $("body").value, appName: "Fit3 Bridge",
+  packageName: "com.fit3bridge.app", whenMillis: Date.now(), appId: 20,
+}));
+$("time").onclick = () => send(P.SERVICE.OOBE, initSettings());
+$("battery").onclick = () => send(P.SERVICE.SETTINGS, P.batteryRequest);
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(logLines.join("\n")); status("Log copied"); }
+  catch { status("Copy failed – select the log text manually"); }
+};
+</script>
+</body>
+</html>
