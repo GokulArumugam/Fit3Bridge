@@ -17,7 +17,7 @@
 </style>
 </head>
 <body>
-<h1>Fit3 Bridge · Web test</h1>
+<h1>Fit3 Bridge · Web test <span class="muted">v3</span></h1>
 <div class="card">
   <div id="status">Not connected</div>
   <div class="muted" id="info"></div>
@@ -63,7 +63,7 @@ async function pump() {
       if (writeWithResponse) await writeChar.writeValueWithResponse(bytes);
       else { await writeChar.writeValueWithoutResponse(bytes); await new Promise((r) => setTimeout(r, 80)); }
     }
-  } catch (e) { log("write error: " + e); }
+  } catch (e) { log("write error: " + describeError(e)); }
   writing = false;
 }
 function send(service, msg) {
@@ -112,25 +112,78 @@ function done() {
   setTimeout(() => send(P.SERVICE.SETTINGS, P.batteryRequest), 300);
 }
 
+const SERVICE_UUID = "00001a1a-0000-1000-8000-00805f9b34fb";
+const PAGE_VERSION = "v3";
+
+function describeError(e) {
+  if (e == null) return "null";
+  if (typeof e !== "object") return `${typeof e} ${String(e)}`;
+  const parts = [];
+  if (e.name) parts.push(e.name);
+  if (e.message) parts.push(e.message);
+  if (e.code !== undefined) parts.push("code " + e.code);
+  try { const j = JSON.stringify(e); if (j && j !== "{}") parts.push(j); } catch {}
+  return parts.length ? parts.join(" | ") : String(e);
+}
+
+async function step(name, fn) {
+  log("→ " + name);
+  try {
+    const r = await fn();
+    log("✓ " + name);
+    return r;
+  } catch (e) {
+    const msg = `✗ ${name}: ${describeError(e)}`;
+    log(msg);
+    e.__step = name;
+    throw e;
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function withRetry(name, fn, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try { return await step(`${name} (try ${i})`, fn); }
+    catch (e) { if (i >= attempts) throw e; await sleep(2000); }
+  }
+}
+
+let notifyChar;
 $("connect").onclick = async () => {
   try {
+    log(`page ${PAGE_VERSION}, UA: ${navigator.userAgent}`);
     if (!navigator.bluetooth) { status("This browser has no Web Bluetooth – use Bluefy"); return; }
-    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [P.GATT.service] });
+    device = await step("requestDevice", () => navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SERVICE_UUID],
+    }));
+    log(`device: name=${device.name} id=${device.id}`);
     device.addEventListener("gattserverdisconnected", () => { ready = false; enable(false); status("Disconnected"); });
     status("Connecting to " + (device.name || "device") + "…");
-    const server = await device.gatt.connect();
-    const svc = await server.getPrimaryService(P.GATT.service);
-    const notifyChar = await svc.getCharacteristic(P.GATT.notify);
-    writeChar = await svc.getCharacteristic(P.GATT.write);
+    const server = await withRetry("gatt.connect", () => device.gatt.connect());
+    const svc = await withRetry("getPrimaryService 1A1A", () => server.getPrimaryService(SERVICE_UUID));
+    try {
+      const chars = await step("list characteristics", () => svc.getCharacteristics());
+      for (const c of chars) {
+        const p = c.properties;
+        log(`  char ${c.uuid} read=${p.read} write=${p.write} wwr=${p.writeWithoutResponse} notify=${p.notify} indicate=${p.indicate}`);
+      }
+    } catch {}
+    notifyChar = await step("get notify char", () => svc.getCharacteristic(P.GATT.notify));
+    writeChar = await step("get write char", () => svc.getCharacteristic(P.GATT.write));
     writeWithResponse = !!writeChar.properties.write;
     log("write mode: " + (writeWithResponse ? "with response" : "without response"));
     notifyChar.addEventListener("characteristicvaluechanged", (e) => {
       const v = e.target.value; onFrame(Array.from(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)));
     });
-    await notifyChar.startNotifications();
+    // First subscribe may trigger iOS pairing; retry after the user accepts.
+    await withRetry("startNotifications", () => notifyChar.startNotifications(), 4);
     status("Subscribed – waiting for band handshake…");
     setTimeout(() => { if (!mtu) status("No handshake from band after 15s – reset the band and retry"); }, 15000);
-  } catch (e) { status("Error: " + e); }
+  } catch (e) {
+    status(`Error at "${e && e.__step ? e.__step : "?"}": ${describeError(e)}`);
+  }
 };
 $("notify").onclick = () => send(P.SERVICE.NOTIFICATIONS, P.newNotification({
   sequence: seq++, title: $("title").value, text: $("body").value, appName: "Fit3 Bridge",
