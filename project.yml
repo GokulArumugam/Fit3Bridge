@@ -1,0 +1,43 @@
+name: Fit3Bridge
+options:
+  bundleIdPrefix: com.fit3bridge
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  Fit3Kit:
+    path: Fit3Kit
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Fit3Bridge:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: Fit3Kit
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Fit3 Bridge
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSBluetoothAlwaysUsageDescription: Fit3 Bridge connects to your Galaxy Fit3 band to show notifications and sync data.
+        UIBackgroundModes: [bluetooth-central, audio]
+    settings:
+      base:
+        # Change this if Xcode says the bundle id is taken (must be unique per Apple ID).
+        PRODUCT_BUNDLE_IDENTIFIER: com.fit3bridge.gokul
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        # Set your (free) Personal Team in Xcode → Signing & Capabilities.
+        DEVELOPMENT_TEAM: ""
