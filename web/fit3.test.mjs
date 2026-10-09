@@ -43,5 +43,18 @@ check(P.hex(P.setCurrentFaceRequest(22, 3)) === "0304161d03", "set face");
 const sel = P.parseFaceSelection(P.fromHex("4304161d03"));
 check(sel && sel.id === 22 && sel.sampler === 3 && sel.confirmedChange, "set face response");
 check(P.parseFaceSelection(P.fromHex("4304161c03")) === null, "bad set face response");
+// calls (layout from the official plugin's SAMessageData builder)
+const sacall = [...Buffer.from("com.samsung.android.providers.sacall.SACallHandlerService")];
+const cp = P.callContactPacket({ name: "Mom", number: "+91 98765 43210", whenMillis: 1234 });
+const cpExpected = [0x82, 7, 0, 1, 7, 1, 0, 0, 0, 5, sacall.length, ...sacall, 6, 0xd2, 4, 0, 0, 0, 0, 0, 0,
+  4, 3, ...Buffer.from("Mom"), 3, 15, ...Buffer.from("+91 98765 43210"), 9, 0];
+check(P.hex(cp) === P.hex(cpExpected), "call contact packet " + P.hex(cp));
+check(sacall.length === 57, "agent name length");
+check(P.hex(P.callStatePacket(P.CallState.RINGING)) === "0301", "ringing");
+check(P.hex(P.callEnableNotification(true)) === "0801", "enable");
+const mc = P.missedCallPacket({ name: "", number: "123", whenMillis: 1 });
+check(P.hex(mc) === "860304000303313233060100000000000000", "missed call " + P.hex(mc));
+check(P.parseCallFromBand([0x05]).action === "reject" && P.parseCallFromBand([0x01]).action === "silence", "band call actions");
+check(P.callContactPacket({ name: "x".repeat(300) }).length < 260, "name truncated to 127 bytes");
 console.log(`${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

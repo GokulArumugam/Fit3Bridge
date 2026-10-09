@@ -235,3 +235,41 @@ export function parseFaceSelection(m) {
   }
   return id === null || sampler === null ? null : { id, sampler, confirmedChange: m[0] === 0x43 };
 }
+
+// ---------------------------------------------------------------------------
+// Calls (SAP service 3 = Samsung "SACallHandler" agent). Recovered from the
+// official Fit3 plugin (CallPacketConstructor / CallPacketConstants).
+// Ringing = enableNotification(1) -> contactName(...) -> callState(RINGING).
+// The band keeps ringing until callState(IDLE/OFFHOOK) arrives.
+export const CALL = 3;
+export const CallState = { IDLE: 0, RINGING: 1, OFFHOOK: 2 };
+export const CallFromBand = { 1: "silence", 4: "showOnPhone", 5: "reject", 9: "missedSync", 13: "callBack", 14: "rejectWithMessage", 15: "clearMissed" };
+
+const callText = (id, s) => { const b = utf8Prefix(s || "", 127); return [id, b.length, ...b]; };
+export const callEnableNotification = (on = true) => [0x08, on ? 1 : 0];
+export const callStatePacket = (state) => [0x03, state];
+export const callSilenceRingerToBand = [0x00];
+export const missedCallDeleteFromMobile = [0x07];
+
+export function callContactPacket({ name = "", number = "", whenMillis = Date.now(), video = false, exception = false }) {
+  if (name && name === number) name = "";
+  return [0x82, 7,
+    0, video ? 0 : 1,                                   // call type: 1 = voice
+    7, 1, 0, 0, 0,                                      // sequence id (int32) = 1
+    ...callText(5, "com.samsung.android.providers.sacall.SACallHandlerService"),
+    6, ...le64(whenMillis),                             // time
+    ...callText(4, name),                               // contact name
+    ...callText(3, number),                             // phone number
+    9, exception ? 1 : 0];                              // DND exception contact
+}
+
+export function missedCallPacket({ name = "", number = "", whenMillis = Date.now(), alert = true }) {
+  if (name && name === number) name = "";
+  return [0x80 | (alert ? 6 : 10), 3, ...callText(4, name), ...callText(3, number), 6, ...le64(whenMillis)];
+}
+
+export function parseCallFromBand(m) {
+  if (!m.length || (m[0] & 0x40)) return null;           // requests only
+  const id = m[0] & 0x3f;
+  return CallFromBand[id] ? { id, action: CallFromBand[id] } : { id, action: "unknown" };
+}

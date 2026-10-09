@@ -292,15 +292,69 @@ final class BandManager: NSObject, ObservableObject {
 
     // MARK: Test alerts
 
-    private var testCallSequence: Int32?
-
+    /// Rings the band for 10 seconds, then turns it into a missed call.
     func sendTestCall() {
-        show(OutgoingNotification(app: .phone, title: "Incoming call", body: "Check your iPhone")) { [weak self] r in
-            self?.lastResult = r
-        }.map { testCallSequence = $0 }
+        startRinging(name: "Test call", number: "")
+        lastResult = "Ringing for 10 s…"
         let gen = generation
         after(10, gen) { me in
-            if let s = me.testCallSequence { me.dismiss(sequence: s); me.testCallSequence = nil }
+            guard me.callRinging else { return }
+            me.endCall(answered: false)
+            me.lastResult = "Test call ended (missed)"
+        }
+    }
+
+    // MARK: Calls (service 3 – Samsung call agent)
+
+    private(set) var callRinging = false
+    private var lastCaller = (name: "", number: "")
+
+    /// Makes the band ring continuously (until `endCall`).
+    func startRinging(name: String, number: String) {
+        guard sapReady else {
+            log.add("Call while band not connected – skipped")
+            return
+        }
+        lastCaller = (name, number)
+        callRinging = true
+        send(service: SapService.call, CallCodec.enableNotification(true))
+        send(service: SapService.call, CallCodec.contactPacket(name: name, number: number))
+        send(service: SapService.call, CallCodec.state(.ringing))
+    }
+
+    /// Stops the ringing. If not answered, the band also gets a missed-call entry.
+    func endCall(answered: Bool, notifyMissed: Bool = true) {
+        guard callRinging else { return }
+        callRinging = false
+        guard sapReady else { return }
+        if answered {
+            send(service: SapService.call, CallCodec.state(.offhook))
+            let gen = generation
+            after(2, gen) { $0.send(service: SapService.call, CallCodec.state(.idle)) }
+        } else {
+            send(service: SapService.call, CallCodec.state(.idle))
+            if notifyMissed {
+                let caller = lastCaller
+                let gen = generation
+                after(2, gen) { $0.send(service: SapService.call, CallCodec.missedCallPacket(name: caller.name, number: caller.number)) }
+            }
+        }
+    }
+
+    private func handleCallAction(_ action: CallCodec.BandAction) {
+        log.add("Band call button: \(action)")
+        switch action {
+        case .reject, .rejectWithMessage:
+            // iOS does not let apps decline calls. Stop the band ringing at least.
+            if callRinging {
+                callRinging = false
+                send(service: SapService.call, CallCodec.state(.idle))
+            }
+            lastResult = "Declining from the band isn't possible on iPhone – band silenced"
+        case .silence:
+            lastResult = "Band muted the call alert"
+        default:
+            break
         }
     }
 
@@ -437,6 +491,8 @@ final class BandManager: NSObject, ObservableObject {
             } else if let command = NotificationCodec.parseBandCommand(message) {
                 log.add("Band command: \(command)")
             }
+        case SapService.call:
+            if let action = CallCodec.parseBandAction(message) { handleCallAction(action) }
         case SapService.watchface:
             if let info = WatchFaceCodec.parseAllFacesInfo(message) {
                 faces = info.faces; facesLoading = false
@@ -525,6 +581,7 @@ final class BandManager: NSObject, ObservableObject {
         if setupStage != .complete { setupStage = .complete }
         phase = .ready
         send(service: SapService.settings, SettingsCodec.languagePacket(localeId: currentLocaleId()))
+        send(service: SapService.call, CallCodec.enableNotification(true)) // as the official plugin does on connect
         let gen = generation
         after(0.3, gen) { $0.requestBattery() }
         flushOutbox()

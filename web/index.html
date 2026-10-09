@@ -19,7 +19,7 @@
 </style>
 </head>
 <body>
-<h1>Fit3 Bridge · Web test <span class="muted">v4</span></h1>
+<h1>Fit3 Bridge · Web test <span class="muted">v5</span></h1>
 <div class="card">
   <div id="status">Not connected</div>
   <div class="muted" id="info"></div>
@@ -34,12 +34,16 @@
   <button id="battery" disabled>Battery</button>
 </div>
 <div class="card">
+  <b>Test a real call alert</b>
+  <p class="muted">Uses Samsung's call service, so the band should ring until you answer or hang up.</p>
+  <input id="callName" value="Mom" placeholder="Caller name">
+  <input id="callNumber" value="+91 98765 43210" placeholder="Phone number">
+  <button id="ring" disabled>📞 Ring the band</button>
+  <button id="answer" disabled>Answer (stop ringing)</button>
+  <button id="hangup" disabled>Hang up → missed call</button>
+</div>
+<div class="card">
   <b>Test alerts</b>
-  <p class="muted">Shows what calls/messages will look like. "Stop ringing" removes the call alert (like answering).</p>
-  <button data-alert="callA" disabled>📞 Incoming call (style A)</button>
-  <button data-alert="callB" disabled>📞 Incoming call (style B)</button>
-  <button id="stopCall" disabled>Stop ringing</button>
-  <button data-alert="missed" disabled>Missed call</button>
   <button data-alert="sms" disabled>💬 SMS</button>
   <button data-alert="gmail" disabled>✉️ Gmail</button>
 </div>
@@ -66,7 +70,7 @@ function log(s) {
 }
 const status = (s) => { $("status").textContent = s; log("== " + s); };
 const enable = (on) => {
-  ["notify", "time", "battery", "faces", "stopCall"].forEach((id) => ($(id).disabled = !on));
+  ["notify", "time", "battery", "faces", "ring", "answer", "hangup"].forEach((id) => ($(id).disabled = !on));
   document.querySelectorAll("[data-alert]").forEach((b) => (b.disabled = !on));
 };
 
@@ -119,6 +123,13 @@ function onFrame(data) {
     else if (id === 2 && setupStage === 2) { setupStage = 3; send(1, initSettings()); }
     else if (id === 3 && setupStage === 3) { setupStage = 4; send(1, P.userAgreementRequest); }
     else if (id === 4 && setupStage === 4) { setupStage = 5; done(); }
+  } else if (m.service === P.CALL) {
+    const c = P.parseCallFromBand(m.message);
+    if (c) {
+      log(`Band call action: ${c.action}`);
+      if (c.action === "reject" && callRinging) endAsMissed("Band pressed Decline");
+      if (c.action === "silence") status("Band pressed Mute");
+    }
   } else if (m.service === P.WATCHFACE) {
     const all = P.parseAllFacesInfo(m.message);
     if (all) { renderFaces(all.faces, all.maximum); return; }
@@ -141,7 +152,7 @@ function done() {
 }
 
 const SERVICE_UUID = "00001a1a-0000-1000-8000-00805f9b34fb";
-const PAGE_VERSION = "v4";
+const PAGE_VERSION = "v5";
 
 function describeError(e) {
   if (e == null) return "null";
@@ -229,21 +240,37 @@ function notify({ title, text, appName, packageName, appId, category, popup = tr
 const deleteNotification = (sequence) =>
   send(P.SERVICE.NOTIFICATIONS, [0x01, 1, sequence & 0xff, (sequence >>> 8) & 0xff, (sequence >>> 16) & 0xff, (sequence >>> 24) & 0xff]);
 
-let callSeq = null;
 const ALERTS = {
-  callA: () => (callSeq = notify({ title: "Incoming call", text: "Check your iPhone", appName: "Phone",
-    packageName: "com.samsung.android.dialer", appId: 21, category: "call" })),
-  callB: () => (callSeq = notify({ title: "Incoming call", text: "Check your iPhone", appName: "Phone",
-    packageName: "com.google.android.dialer", appId: 25 })),
-  missed: () => notify({ title: "Missed call", text: "Check your iPhone", appName: "Phone",
-    packageName: "com.samsung.android.dialer", appId: 21, category: "missed_call" }),
   sms: () => notify({ title: "Mom", text: "Did you eat? Call me when you are free.", appName: "Messages",
     packageName: "com.samsung.android.messaging", appId: 22, category: "msg" }),
   gmail: () => notify({ title: "Amazon.in", text: "Your order has been shipped and will arrive tomorrow.", appName: "Gmail",
     packageName: "com.google.android.gm", appId: 23, category: "email" }),
 };
 document.querySelectorAll("[data-alert]").forEach((b) => (b.onclick = () => ALERTS[b.dataset.alert]()));
-$("stopCall").onclick = () => { if (callSeq) { deleteNotification(callSeq); callSeq = null; } };
+
+// --- Real call flow (service 3) ---
+let callRinging = false;
+const callInfo = () => ({ name: $("callName").value, number: $("callNumber").value, whenMillis: Date.now() });
+$("ring").onclick = () => {
+  send(P.CALL, P.callEnableNotification(true));
+  send(P.CALL, P.callContactPacket(callInfo()));
+  send(P.CALL, P.callStatePacket(P.CallState.RINGING));
+  callRinging = true;
+  status("📞 Ringing… (Answer or Hang up to stop)");
+};
+$("answer").onclick = () => {
+  send(P.CALL, P.callStatePacket(P.CallState.OFFHOOK));
+  setTimeout(() => send(P.CALL, P.callStatePacket(P.CallState.IDLE)), 3000);
+  callRinging = false;
+  status("Answered");
+};
+function endAsMissed(why) {
+  send(P.CALL, P.callStatePacket(P.CallState.IDLE));
+  setTimeout(() => send(P.CALL, P.missedCallPacket(callInfo())), 2000);
+  callRinging = false;
+  status(why);
+}
+$("hangup").onclick = () => endAsMissed("Hung up – missed call sent");
 
 let faceListTimer = null;
 function loadFaces() {

@@ -113,5 +113,15 @@ let faceSel = WatchFaceCodec.parseSelection(h("4304161d03"))
 check(faceSel?.id == 22 && faceSel?.sampler == 3 && faceSel?.changed == true, "set face response")
 check(WatchFaceCodec.parseSelection(h("4304161c03")) == nil, "bad set face response")
 
+// --- Calls (service 3) ------------------------------------------------------------
+let cp = CallCodec.contactPacket(name: "Mom", number: "+91 98765 43210", when: Date(timeIntervalSince1970: 1.234))
+let agent = Array("com.samsung.android.providers.sacall.SACallHandlerService".utf8)
+let cpExpected: [UInt8] = [0x82, 7, 0, 1, 7, 1, 0, 0, 0, 5, UInt8(agent.count)] + agent +
+    [6, 0xd2, 4, 0, 0, 0, 0, 0, 0, 4, 3] + Array("Mom".utf8) + [3, 15] + Array("+91 98765 43210".utf8) + [9, 0]
+check(cp == cpExpected, "call contact packet (got \(cp.hex))")
+check(CallCodec.state(.ringing) == [3, 1] && CallCodec.enableNotification() == [8, 1], "call state / enable")
+check(CallCodec.missedCallPacket(name: "", number: "123", when: Date(timeIntervalSince1970: 0.001)).hex == "860304000303313233060100000000000000", "missed call")
+check(CallCodec.parseBandAction([0x05]) == .reject && CallCodec.parseBandAction([0x41]) == nil, "band call action")
+
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

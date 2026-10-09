@@ -10,6 +10,7 @@ import Foundation
 
 public enum SapService {
     public static let oobe = 1
+    public static let call = 3
     public static let location = 4
     public static let weather = 5
     public static let watchface = 6
@@ -27,6 +28,7 @@ public enum SapService {
     public static func name(_ id: Int) -> String {
         switch id {
         case oobe: return "OOBE"
+        case call: return "CALL"
         case weather: return "WEATHER"
         case watchface: return "FACE"
         case notifications: return "NOTI"
