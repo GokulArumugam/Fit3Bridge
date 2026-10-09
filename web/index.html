@@ -10,6 +10,8 @@
   .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
   button { font: inherit; width: 100%; padding: 12px; margin: 4px 0; border: 0; border-radius: 10px; background: #007aff; color: #fff; }
   button:disabled { background: #b8c7da; }
+  button.face { background: #e5e5ea; color: #111; text-align: left; }
+  button.face.current { background: #34c759; color: #fff; }
   input { font: inherit; width: 100%; box-sizing: border-box; padding: 10px; margin: 4px 0; border: 1px solid #ccc; border-radius: 8px; }
   #status { font-weight: 600; }
   #log { font: 11px ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 45vh; overflow: auto; }
@@ -17,7 +19,7 @@
 </style>
 </head>
 <body>
-<h1>Fit3 Bridge · Web test <span class="muted">v3</span></h1>
+<h1>Fit3 Bridge · Web test <span class="muted">v4</span></h1>
 <div class="card">
   <div id="status">Not connected</div>
   <div class="muted" id="info"></div>
@@ -30,6 +32,22 @@
   <button id="notify" disabled>Send notification</button>
   <button id="time" disabled>Sync time</button>
   <button id="battery" disabled>Battery</button>
+</div>
+<div class="card">
+  <b>Test alerts</b>
+  <p class="muted">Shows what calls/messages will look like. "Stop ringing" removes the call alert (like answering).</p>
+  <button data-alert="callA" disabled>📞 Incoming call (style A)</button>
+  <button data-alert="callB" disabled>📞 Incoming call (style B)</button>
+  <button id="stopCall" disabled>Stop ringing</button>
+  <button data-alert="missed" disabled>Missed call</button>
+  <button data-alert="sms" disabled>💬 SMS</button>
+  <button data-alert="gmail" disabled>✉️ Gmail</button>
+</div>
+<div class="card">
+  <b>Watch faces</b>
+  <p class="muted">Switch between faces already on the band. (Installing new faces is not possible from iPhone.)</p>
+  <button id="faces" disabled>Load watch faces</button>
+  <div id="faceList"></div>
 </div>
 <div class="card">
   <button id="copy">Copy log</button>
@@ -47,7 +65,10 @@ function log(s) {
   $("log").textContent = logLines.slice(-300).reverse().join("\n");
 }
 const status = (s) => { $("status").textContent = s; log("== " + s); };
-const enable = (on) => ["notify", "time", "battery"].forEach((id) => ($(id).disabled = !on));
+const enable = (on) => {
+  ["notify", "time", "battery", "faces", "stopCall"].forEach((id) => ($(id).disabled = !on));
+  document.querySelectorAll("[data-alert]").forEach((b) => (b.disabled = !on));
+};
 
 let device, writeChar, writeWithResponse = true, mtu = 0, ready = false, setupStage = 0, seq = Date.now() % 100000 + 1;
 const asm = new P.Reassembler();
@@ -98,6 +119,13 @@ function onFrame(data) {
     else if (id === 2 && setupStage === 2) { setupStage = 3; send(1, initSettings()); }
     else if (id === 3 && setupStage === 3) { setupStage = 4; send(1, P.userAgreementRequest); }
     else if (id === 4 && setupStage === 4) { setupStage = 5; done(); }
+  } else if (m.service === P.WATCHFACE) {
+    const all = P.parseAllFacesInfo(m.message);
+    if (all) { renderFaces(all.faces, all.maximum); return; }
+    const list = P.parseInstalledFaces(m.message);
+    if (list) { renderFaces(list, null); return; }
+    const sel = P.parseFaceSelection(m.message);
+    if (sel && sel.confirmedChange) { status("✅ Watch face changed"); setTimeout(loadFaces, 400); }
   } else if (m.service === P.SERVICE.SETTINGS) {
     const b = P.parseBattery(m.message);
     if (b) $("info").textContent = `Battery ${b.percent}%${b.charging ? " (charging)" : ""}`;
@@ -113,7 +141,7 @@ function done() {
 }
 
 const SERVICE_UUID = "00001a1a-0000-1000-8000-00805f9b34fb";
-const PAGE_VERSION = "v3";
+const PAGE_VERSION = "v4";
 
 function describeError(e) {
   if (e == null) return "null";
@@ -191,6 +219,57 @@ $("notify").onclick = () => send(P.SERVICE.NOTIFICATIONS, P.newNotification({
 }));
 $("time").onclick = () => send(P.SERVICE.OOBE, initSettings());
 $("battery").onclick = () => send(P.SERVICE.SETTINGS, P.batteryRequest);
+function notify({ title, text, appName, packageName, appId, category, popup = true }) {
+  const sequence = seq++;
+  send(P.SERVICE.NOTIFICATIONS, P.newNotification({
+    sequence, title, text, appName, packageName, whenMillis: Date.now(), appId, category, popup,
+  }));
+  return sequence;
+}
+const deleteNotification = (sequence) =>
+  send(P.SERVICE.NOTIFICATIONS, [0x01, 1, sequence & 0xff, (sequence >>> 8) & 0xff, (sequence >>> 16) & 0xff, (sequence >>> 24) & 0xff]);
+
+let callSeq = null;
+const ALERTS = {
+  callA: () => (callSeq = notify({ title: "Incoming call", text: "Check your iPhone", appName: "Phone",
+    packageName: "com.samsung.android.dialer", appId: 21, category: "call" })),
+  callB: () => (callSeq = notify({ title: "Incoming call", text: "Check your iPhone", appName: "Phone",
+    packageName: "com.google.android.dialer", appId: 25 })),
+  missed: () => notify({ title: "Missed call", text: "Check your iPhone", appName: "Phone",
+    packageName: "com.samsung.android.dialer", appId: 21, category: "missed_call" }),
+  sms: () => notify({ title: "Mom", text: "Did you eat? Call me when you are free.", appName: "Messages",
+    packageName: "com.samsung.android.messaging", appId: 22, category: "msg" }),
+  gmail: () => notify({ title: "Amazon.in", text: "Your order has been shipped and will arrive tomorrow.", appName: "Gmail",
+    packageName: "com.google.android.gm", appId: 23, category: "email" }),
+};
+document.querySelectorAll("[data-alert]").forEach((b) => (b.onclick = () => ALERTS[b.dataset.alert]()));
+$("stopCall").onclick = () => { if (callSeq) { deleteNotification(callSeq); callSeq = null; } };
+
+let faceListTimer = null;
+function loadFaces() {
+  $("faceList").innerHTML = '<p class="muted">Loading…</p>';
+  send(P.WATCHFACE, P.allFacesInfoRequest);
+  clearTimeout(faceListTimer);
+  faceListTimer = setTimeout(() => {
+    if ($("faceList").textContent.includes("Loading")) send(P.WATCHFACE, P.installedFacesRequest);
+  }, 3000);
+}
+function renderFaces(faces, maximum) {
+  clearTimeout(faceListTimer);
+  const box = $("faceList");
+  box.innerHTML = `<p class="muted">${faces.length} face(s) installed${maximum ? ` (max ${maximum})` : ""}. Tap to switch.</p>`;
+  for (const f of faces) {
+    const b = document.createElement("button");
+    b.className = "face" + (f.current ? " current" : "");
+    const label = f.name && !f.name.startsWith("wf_name-") ? f.name : `Face ${f.id}`;
+    b.textContent = `${f.current ? "● " : ""}${label} · style ${f.sampler}`;
+    if (f.wireId < 1 || f.wireId > 255) b.disabled = true;
+    b.onclick = () => { status("Switching watch face…"); send(P.WATCHFACE, P.setCurrentFaceRequest(f.wireId, f.sampler)); };
+    box.appendChild(b);
+  }
+}
+$("faces").onclick = loadFaces;
+
 $("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(logLines.join("\n")); status("Log copied"); }
   catch { status("Copy failed – select the log text manually"); }

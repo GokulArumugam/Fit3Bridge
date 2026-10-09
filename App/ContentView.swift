@@ -56,6 +56,10 @@ struct ContentView: View {
         Section("Band") {
             Button("Send test notification") { band.sendTestNotification() }
                 .disabled(!band.isReady)
+            Button("Test call alert (rings 10 s)") { band.sendTestCall() }
+                .disabled(!band.isReady)
+            NavigationLink("Watch faces") { WatchFacesView() }
+                .disabled(!band.isReady)
             Button("Sync time") { band.syncTime() }
                 .disabled(!band.isReady)
             Button("Refresh battery") { band.requestBattery() }
@@ -143,6 +147,42 @@ struct ScannerView: View {
             .onAppear { band.startScan() }
             .onDisappear { band.stopScan() }
         }
+    }
+}
+
+struct WatchFacesView: View {
+    @EnvironmentObject var band: BandManager
+
+    var body: some View {
+        List {
+            Section {
+                if band.facesLoading && band.faces.isEmpty {
+                    HStack { ProgressView(); Text("Loading…").foregroundStyle(.secondary) }
+                }
+                ForEach(band.faces) { face in
+                    Button {
+                        band.selectWatchFace(face)
+                    } label: {
+                        HStack {
+                            Image(systemName: face.current ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(face.current ? .green : .secondary)
+                            Text(face.label)
+                            Spacer()
+                            Text("style \(face.sampler)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(!face.selectable)
+                }
+            } footer: {
+                Text("Only faces already on the band can be selected. Installing new faces needs a Bluetooth mode iOS apps can't use.")
+            }
+            if !band.lastResult.isEmpty {
+                Text(band.lastResult).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Watch faces")
+        .refreshable { band.loadWatchFaces() }
+        .onAppear { band.loadWatchFaces() }
     }
 }
 

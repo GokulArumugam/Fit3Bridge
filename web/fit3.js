@@ -157,3 +157,81 @@ export function findSoftwareVersion(m) {
   const r = s.match(/R390[A-Z0-9]{7,12}/);
   return r ? r[0] : null;
 }
+
+// ---------------------------------------------------------------------------
+// Watch faces (service 6). Only faces already installed on the band can be
+// selected over BLE; installing new faces needs Bluetooth Classic (not on iOS).
+export const WATCHFACE = 6;
+export const allFacesInfoRequest = [0x00];
+export const installedFacesRequest = [0x01];
+export const currentFaceRequest = [0x02];
+export function setCurrentFaceRequest(id, sampler) {
+  if (id < 1 || id > 255 || sampler < 0 || sampler > 9) throw new Error("face not selectable remotely");
+  return [0x03, 0x04, id, 0x1d, sampler];
+}
+
+function parseFaceEntries(m, start, count) {
+  if (count > 100) return null;
+  let off = start;
+  const out = [];
+  for (let n = 0; n < count; n++) {
+    if (off + 2 > m.length || m[off++] !== 24) return null;
+    const fields = m[off++];
+    if (fields < 1 || fields > 32) return null;
+    const seen = new Set();
+    let id = null, sampler = null, name = null, version = null, current = false;
+    for (let f = 0; f < fields; f++) {
+      if (off + 2 > m.length) return null;
+      const field = m[off++];
+      if (seen.has(field)) return null;
+      seen.add(field);
+      const value = m[off++];
+      if ([5, 6, 7, 19, 17].includes(field)) {
+        if (off + value > m.length) return null;
+        const text = new TextDecoder().decode(new Uint8Array(m.slice(off, off + value))).replace(/\0+$/, "");
+        if (field === 6) name = text.trim() || null;
+        if (field === 5) version = text;
+        off += value;
+      } else if (field === 4 || (field >= 8 && field <= 16) || field === 18 || field === 29 || field === 30) {
+        if (field === 4) id = value;
+        if (field === 8 || field === 29) { if (sampler !== null && sampler !== value) return null; sampler = value; }
+        if (field === 11) { if (value > 1) return null; current = value === 1; }
+      } else return null;
+    }
+    if (id === null || sampler === null) return null;
+    const named = name && /^wf_name-(\d{5})$/.exec(name);
+    const namedId = named ? parseInt(named[1], 10) : null;
+    if (namedId !== null && (namedId < 1 || (namedId & 255) !== id)) return null;
+    out.push({ id: namedId ?? id, wireId: id, sampler, name, version, current });
+  }
+  if (off !== m.length || out.filter((f) => f.current).length > 1) return null;
+  return out;
+}
+
+/** Response to allFacesInfoRequest: {currentId, maximum, faces} */
+export function parseAllFacesInfo(m) {
+  if (m.length < 9 || m[0] !== 0xc0 || m[1] !== 0 || m[3] !== 1 || m[5] !== 2 || m[7] !== 3 || m[6] !== m[8]) return null;
+  const maximum = m[4], count = m[8];
+  if (maximum === 0 || count > maximum) return null;
+  const faces = parseFaceEntries(m, 9, count);
+  if (!faces) return null;
+  const cur = faces.find((f) => f.current);
+  if (faces.length && (!cur || cur.wireId !== m[2])) return null;
+  return { currentId: cur ? cur.id : m[2], maximum, faces };
+}
+
+/** Response to installedFacesRequest. */
+export function parseInstalledFaces(m) {
+  if (m.length < 3 || (m[0] & 0x7f) !== 0x41 || m[1] !== 3) return null;
+  return parseFaceEntries(m, 3, m[2]);
+}
+
+/** Response to currentFace / setCurrentFace: [0x42|0x43, 4, id, 29, sampler] */
+export function parseFaceSelection(m) {
+  if (m.length !== 5 || (m[0] !== 0x42 && m[0] !== 0x43)) return null;
+  let id = null, sampler = null;
+  for (let i = 1; i < 5; i += 2) {
+    if (m[i] === 4) id = m[i + 1]; else if (m[i] === 29) sampler = m[i + 1]; else return null;
+  }
+  return id === null || sampler === null ? null : { id, sampler, confirmedChange: m[0] === 0x43 };
+}

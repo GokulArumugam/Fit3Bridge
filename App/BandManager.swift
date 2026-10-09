@@ -53,6 +53,8 @@ final class BandManager: NSObject, ObservableObject {
     @Published private(set) var softwareVersion: String?
     @Published private(set) var battery: BatteryCodec.Reading?
     @Published private(set) var lastResult = ""
+    @Published private(set) var faces: [WatchFaceCodec.Face] = []
+    @Published private(set) var facesLoading = false
     @Published var showAllDevices = false
 
     var isReady: Bool { phase == .ready && notificationsReady }
@@ -264,6 +266,44 @@ final class BandManager: NSObject, ObservableObject {
         return sequence
     }
 
+    // MARK: Watch faces
+
+    func loadWatchFaces() {
+        guard sapReady else { return }
+        facesLoading = true
+        send(service: SapService.watchface, WatchFaceCodec.allFacesInfoRequest)
+        let gen = generation
+        after(3, gen) { me in
+            if me.facesLoading { me.send(service: SapService.watchface, WatchFaceCodec.installedFacesRequest) }
+        }
+        after(8, gen) { me in
+            if me.facesLoading { me.facesLoading = false; me.lastResult = "Band did not send its watch faces" }
+        }
+    }
+
+    func selectWatchFace(_ face: WatchFaceCodec.Face) {
+        guard sapReady, let packet = WatchFaceCodec.setCurrentFaceRequest(id: face.wireId, sampler: face.sampler) else {
+            lastResult = "Choose this face on the band (touch & hold the watch face)"
+            return
+        }
+        lastResult = "Switching watch face…"
+        send(service: SapService.watchface, packet)
+    }
+
+    // MARK: Test alerts
+
+    private var testCallSequence: Int32?
+
+    func sendTestCall() {
+        show(OutgoingNotification(app: .phone, title: "Incoming call", body: "Check your iPhone")) { [weak self] r in
+            self?.lastResult = r
+        }.map { testCallSequence = $0 }
+        let gen = generation
+        after(10, gen) { me in
+            if let s = me.testCallSequence { me.dismiss(sequence: s); me.testCallSequence = nil }
+        }
+    }
+
     func dismiss(sequence: Int32) {
         guard sapReady else { return }
         send(service: SapService.notifications, NotificationCodec.deleteFromMobileRequest(sequence: sequence))
@@ -396,6 +436,16 @@ final class BandManager: NSObject, ObservableObject {
                 ackHandlers.removeValue(forKey: ack.sequence)?(ack.accepted ? .accepted : .rejected)
             } else if let command = NotificationCodec.parseBandCommand(message) {
                 log.add("Band command: \(command)")
+            }
+        case SapService.watchface:
+            if let info = WatchFaceCodec.parseAllFacesInfo(message) {
+                faces = info.faces; facesLoading = false
+            } else if let list = WatchFaceCodec.parseInstalledFaces(message) {
+                faces = list; facesLoading = false
+            } else if let sel = WatchFaceCodec.parseSelection(message), sel.changed {
+                lastResult = "Watch face changed"
+                let gen = generation
+                after(0.4, gen) { $0.loadWatchFaces() }
             }
         default:
             break // Health, weather, media etc. come later.

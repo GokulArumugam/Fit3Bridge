@@ -29,5 +29,19 @@ check(P.hex(n) === "800a0001012a0000000602323002d2040000000000000302486904040042
 check(P.parseBattery([0x42, 5, 58, 6, 0]).percent === 58 && P.parseBattery([0x41, 5, 58, 6, 0]) === null, "battery");
 check(P.parseAck([0x40, 1, 42, 0, 0, 0, 11, 1]).sequence === 42, "ack");
 check(P.findSoftwareVersion([...Buffer.from("xxR390XXU0AZA3\0")]) === "R390XXU0AZA3", "version");
+// watch faces (vectors from Fit3-App tests)
+const entry = "18080450050130060e77665f6e616d652d303030383000080209000a020b010c00";
+const inst = P.parseInstalledFaces(P.fromHex("c10301" + entry));
+check(inst && inst.length === 1 && inst[0].id === 80 && inst[0].sampler === 2 && inst[0].current && inst[0].name === "wf_name-00080", "installed faces " + JSON.stringify(inst));
+const all = P.parseAllFacesInfo(P.fromHex("c00050010a02010301" + entry));
+check(all && all.maximum === 10 && all.currentId === 80 && all.faces.length === 1, "all faces info");
+check(P.parseInstalledFaces(P.fromHex("410301180204161d03"))[0].id === 22, "simple face list");
+check(P.parseInstalledFaces(P.fromHex("c10302180204160800")) === null, "missing entry rejected");
+check(P.parseInstalledFaces(P.fromHex("c1030118020416080000")) === null, "trailing data rejected");
+check(P.parseAllFacesInfo(P.fromHex("c00016010a02020300")) === null, "count mismatch rejected");
+check(P.hex(P.setCurrentFaceRequest(22, 3)) === "0304161d03", "set face");
+const sel = P.parseFaceSelection(P.fromHex("4304161d03"));
+check(sel && sel.id === 22 && sel.sampler === 3 && sel.confirmedChange, "set face response");
+check(P.parseFaceSelection(P.fromHex("4304161c03")) === null, "bad set face response");
 console.log(`${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

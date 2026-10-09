@@ -98,5 +98,20 @@ check(NotificationCodec.deleteFromMobileRequest(sequence: 5) == [0x01, 1, 5, 0, 
 // --- Software version ---------------------------------------------------------
 check(SapCodec.findSoftwareVersion(Array("xxR390XXU0AZA3\0yy".utf8)) == "R390XXU0AZA3", "software version")
 
+// --- Watch faces -----------------------------------------------------------------
+let faceEntry = "18080450050130060e77665f6e616d652d303030383000080209000a020b010c00"
+let inst = WatchFaceCodec.parseInstalledFaces(h("c10301" + faceEntry))
+check(inst?.count == 1 && inst?[0].id == 80 && inst?[0].sampler == 2 && inst?[0].current == true, "installed faces")
+let allFaces = WatchFaceCodec.parseAllFacesInfo(h("c00050010a02010301" + faceEntry))
+check(allFaces?.maximum == 10 && allFaces?.currentId == 80 && allFaces?.faces.count == 1, "all faces info")
+check(WatchFaceCodec.parseInstalledFaces(h("410301180204161d03"))?.first?.id == 22, "simple face list")
+check(WatchFaceCodec.parseInstalledFaces(h("c10302180204160800")) == nil, "missing entry rejected")
+check(WatchFaceCodec.parseInstalledFaces(h("c1030118020416080000")) == nil, "trailing data rejected")
+check(WatchFaceCodec.parseAllFacesInfo(h("c00016010a02020300")) == nil, "count mismatch rejected")
+check(WatchFaceCodec.setCurrentFaceRequest(id: 22, sampler: 3) == h("0304161d03"), "set face request")
+let faceSel = WatchFaceCodec.parseSelection(h("4304161d03"))
+check(faceSel?.id == 22 && faceSel?.sampler == 3 && faceSel?.changed == true, "set face response")
+check(WatchFaceCodec.parseSelection(h("4304161c03")) == nil, "bad set face response")
+
 print("\(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
