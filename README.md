@@ -6,25 +6,28 @@ The Bluetooth protocol (Samsung "SAP" over BLE GATT service `0x1A1A`) is ported 
 [yuriyurin/Fit3-App](https://github.com/yuriyurin/Fit3-App) (GPL-3.0-only), so this project is GPL-3.0 too.
 Not affiliated with Samsung.
 
+> **Working on this repo (human or AI agent)? Start with [`AGENTS.md`](AGENTS.md)**, then
+> [`docs/STATUS.md`](docs/STATUS.md) (progress + next steps) and [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
 ## What works / planned
 
 | Feature | Status |
 |---|---|
-| Connect, handshake, first-run setup of the band | ✅ v0.1 (needs real-band testing) |
-| Time / timezone / language sync | ✅ v0.1 |
-| Battery level | ✅ v0.1 |
-| Test notification | ✅ v0.1 |
-| Incoming / missed call alerts (no caller name – iOS limit) | ✅ v0.1 |
-| SMS/iMessage via Shortcuts "Message" automation | ✅ v0.1 |
+| Connect, handshake, first-run setup of the band | ✅ verified on the real band (web test page) |
+| Notifications (test, SMS/Gmail samples) | ✅ verified on the real band |
+| Incoming call **ringing** (Samsung call service) + missed call | ✅ verified on the real band |
+| Time / language sync, battery | ✅ |
+| Native iOS app (background connection, call alerts, Shortcuts SMS action) | ✅ builds in CI – ⏳ not yet installed on the phone |
 | Gmail (via iCloud forward + Mail automation) | ⏭ next |
 | Steps / heart rate / sleep → Apple Health | ⏭ later |
+| Installing new watch faces | 🔬 research (needs Bluetooth Classic, which iOS apps can't use) |
 | WhatsApp messages | ❌ not possible on iOS without extra hardware |
 
 ## Layout
 
 ```
 Fit3Kit/            Swift package: pure protocol code (no Bluetooth), testable on the Mac
-  Sources/Fit3Kit/        SAMessage, SapCodec (frames/CRC/fragmenting), OOBE, battery, notifications
+  Sources/Fit3Kit/        SAMessage, SapCodec (frames/CRC/fragmenting), OOBE, battery, notifications, calls, watch faces
   Sources/Fit3KitChecks/  `swift run Fit3KitChecks` – checks against real captured packets
 App/                iOS app (SwiftUI)
   BandManager.swift       CoreBluetooth + SAP session (handshake, setup, write queue, reconnect)
@@ -32,6 +35,8 @@ App/                iOS app (SwiftUI)
   KeepAlive.swift         optional silent audio so iOS keeps the app running (for calls)
   SendToBandIntent.swift  Shortcuts action "Send to Galaxy Fit3"
   ContentView.swift       UI, scanner, protocol log, Shortcuts help
+web/                Web Bluetooth test page for the Bluefy browser (https://gokularumugam.github.io/Fit3Bridge/)
+docs/               STATUS.md (progress/roadmap), PROTOCOL.md (protocol reference)
 project.yml         XcodeGen spec → `xcodegen generate` creates Fit3Bridge.xcodeproj
 ```
 
